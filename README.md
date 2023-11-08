@@ -1,2 +1,3 @@
-# 本项目为本科两个项目记录
-分别为半监督工作和分类任务
+# Works When I Was A Dumb Undergraduate
+Semi-supervised and lung febric
+
