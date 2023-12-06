@@ -1,340 +1,124 @@
-# Import of libraries
 import random
-from argparse import ArgumentParser
-
-import einops
-import imageio
-import matplotlib.pyplot as plt
+import os
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.optim import Adam
+import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
-from torchvision.datasets.mnist import MNIST, FashionMNIST
-from torchvision.transforms import Compose, Lambda, ToTensor, Grayscale
-from tqdm.auto import tqdm
-import os
-# Import of custom models
-from med_model import MyDDPM, MyUNet
 from torchvision import transforms, datasets
+from torchvision.transforms import ToTensor, Resize
+from argparse import ArgumentParser
+from tqdm import tqdm
+import imageio
+from custom_models import DDPM, UNet
+
 # Setting reproducibility
 SEED = 0
 random.seed(SEED)
 np.random.seed(SEED)
 torch.manual_seed(SEED)
 
-# Definitions
-STORE_PATH_MNIST = f"ddpm_model_mnist.pt"
-STORE_PATH_FASHION = f"ddpm_model_fashion.pt"
+# Constants
+STORE_PATH = "ddpm_model.pt"
 
 
-def show_images(images, title="", save_path="./lung_new"):
-    """Shows the provided images as sub-pictures in a square"""
-    # Ensure save path exists
-    os.makedirs(save_path, exist_ok=True)
-    # Converting images to CPU numpy arrays
-    if type(images) is torch.Tensor:
-        images = images.detach().cpu().numpy()
+def display_images(images, title="", save_dir="output"):
+    """Display and save a grid of images."""
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
 
-    # Defining number of rows and columns
-    fig = plt.figure(figsize=(8, 8))
-    rows = int(len(images) ** (1 / 2))
-    cols = round(len(images) / rows)
+    if isinstance(images, torch.Tensor):
+        images = images.cpu().numpy()
 
-    # Populating figure with sub-plots
-    idx = 0
-    for r in range(rows):
-        for c in range(cols):
-            fig.add_subplot(rows, cols, idx + 1)
+    num_images = len(images)
+    grid_size = int(np.ceil(np.sqrt(num_images)))
+    fig, axes = plt.subplots(grid_size, grid_size, figsize=(8, 8))
 
-            if idx < len(images):
-                plt.imshow(images[idx][0], cmap="gray")
-                idx += 1
-    fig.suptitle(title, fontsize=30)
-
-    # Save the figure before showing it
-    plt.savefig(os.path.join(save_path, title + ".png"))
-    # Showing the figure
+    for i, ax in enumerate(axes.flatten()):
+        if i < num_images:
+            ax.imshow(images[i][0], cmap='gray')
+            ax.axis('off')
+        else:
+            ax.remove()
+    fig.suptitle(title, fontsize=16)
+    plt.savefig(os.path.join(save_dir, f"{title}.png"))
     plt.show()
 
 
-def save_individual_images(images, title="", save_path="./lung_new/individual"):
-    """Saves each provided image as a separate file in the specified path"""
+def process_and_save_images(images, title="", folder="saved_images"):
+    """Save individual images to a folder."""
+    if not os.path.exists(folder):
+        os.makedirs(folder)
 
-    # Converting images to CPU numpy arrays if they are torch Tensors
-    if type(images) is torch.Tensor:
-        images = images.detach().cpu().numpy()
+    if isinstance(images, torch.Tensor):
+        images = images.cpu().numpy()
 
-    # Ensure save path exists
-    os.makedirs(save_path, exist_ok=True)
-
-    # Loop through each image and save it
     for idx, img in enumerate(images):
-        plt.figure()
-        plt.imshow(img[0], cmap="gray")  # Assuming images are in grayscale
-        plt.title(f"{title} {idx}")
-        plt.savefig(os.path.join(save_path, f"{title}_{idx}.png"))
-        plt.close()  # Close the figure to free up memory
-
-# Example usage
-# Assuming 'images' is a list or tensor of multiple images
-# save_individual_images(images, title="Image", save_path="./pictures")
+        plt.imsave(os.path.join(folder, f"{title}_{idx}.png"), img[0], cmap='gray')
 
 
-def show_first_batch(loader):
-    for batch in loader:
-        show_images(batch[0], "Images in the first batch")
+def visualize_batch(data_loader):
+    """Visualize the first batch from the loader."""
+    for imgs, _ in data_loader:
+        display_images(imgs, title="Sample Batch")
         break
 
 
-def show_forward(ddpm, loader, device):
-    # Showing the forward process
-    for batch in loader:
-        imgs = batch[0]
-
-        show_images(imgs, "Original images")
-
-        for percent in [0.25, 0.5, 0.75, 1]:
-            show_images(
-                ddpm(
-                    imgs.to(device),
-                    [int(percent * ddpm.n_steps) - 1 for _ in range(len(imgs))],
-                ),
-                f"DDPM Noisy images {int(percent * 100)}%",
-            )
+def simulate_ddpm_process(ddpm_model, data_loader, device):
+    """Simulate and display the DDPM process."""
+    for imgs, _ in data_loader:
+        display_images(imgs, "Original Images")
+        for percent in [0.25, 0.5, 0.75, 1.0]:
+            noisy_imgs = ddpm_model(imgs.to(device), int(percent * ddpm_model.n_steps))
+            display_images(noisy_imgs.cpu(), f"Noisy Images {int(percent * 100)}%")
         break
 
 
-def generate_new_images(
-        ddpm,
-        n_samples=16,
-        device=None,
-        frames_per_gif=16,
-        gif_name="sampling.gif",
-        c=1,
-        h=512,
-        w=512,
-):
-    """Given a DDPM model, a number of samples to be generated and a device, returns some newly generated samples"""
-    frame_idxs = np.linspace(0, ddpm.n_steps, frames_per_gif).astype(np.uint)
-    frames = []
+def generate_samples(ddpm_model, n_samples=16, device='cpu'):
+    """Generate new samples using the DDPM model."""
+    ddpm_model.to(device)
+    x = torch.randn(n_samples, 1, 28, 28, device=device)
+    for t in range(ddpm_model.n_steps - 1, -1, -1):
+        noise = torch.randn_like(x) if t > 0 else torch.zeros_like(x)
+        x = ddpm_model.reverse_step(x, t, noise)
 
-    with torch.no_grad():
-        if device is None:
-            device = ddpm.device
-
-        # Starting from random noise
-        x = torch.randn(n_samples, c, h, w).to(device)
-
-        for idx, t in enumerate(list(range(ddpm.n_steps))[::-1]):
-            # Estimating noise to be removed
-            time_tensor = (torch.ones(n_samples, 1) * t).to(device).long()
-            eta_theta = ddpm.backward(x, time_tensor)
-
-            alpha_t = ddpm.alphas[t]
-            alpha_t_bar = ddpm.alpha_bars[t]
-
-            # Partially denoising the image
-            x = (1 / alpha_t.sqrt()) * (
-                    x - (1 - alpha_t) / (1 - alpha_t_bar).sqrt() * eta_theta
-            )
-
-            if t > 0:
-                z = torch.randn(n_samples, c, h, w).to(device)
-
-                # Option 1: sigma_t squared = beta_t
-                beta_t = ddpm.betas[t]
-                sigma_t = beta_t.sqrt()
-
-                # Option 2: sigma_t squared = beta_tilda_t
-                # prev_alpha_t_bar = ddpm.alpha_bars[t-1] if t > 0 else ddpm.alphas[0]
-                # beta_tilda_t = ((1 - prev_alpha_t_bar)/(1 - alpha_t_bar)) * beta_t
-                # sigma_t = beta_tilda_t.sqrt()
-
-                # Adding some more noise like in Langevin Dynamics fashion
-                x = x + sigma_t * z
-
-            # Adding frames to the GIF
-            if idx in frame_idxs or t == 0:
-                # Putting digits in range [0, 255]
-                normalized = x.clone()
-                for i in range(len(normalized)):
-                    normalized[i] -= torch.min(normalized[i])
-                    normalized[i] *= 255 / torch.max(normalized[i])
-
-                # Reshaping batch (n, c, h, w) to be a (as much as it gets) square frame
-                frame = einops.rearrange(
-                    normalized,
-                    "(b1 b2) c h w -> (b1 h) (b2 w) c",
-                    # b1 = int(4)
-                    b1=int(n_samples ** 0.5),
-                )
-                frame = frame.cpu().numpy().astype(np.uint8)
-
-                # Rendering frame
-                frames.append(frame)
-
-    # Storing the gif
-    with imageio.get_writer(gif_name, mode="I") as writer:
-        for idx, frame in enumerate(frames):
-            rgb_frame = np.repeat(frame, 3, axis=2)
-            writer.append_data(rgb_frame)
-
-            # Showing the last frame for a longer time
-            if idx == len(frames) - 1:
-                last_rgb_frame = np.repeat(frames[-1], 3, axis=2)
-                for _ in range(frames_per_gif // 3):
-                    writer.append_data(last_rgb_frame)
-    return x
+    return x.detach().cpu()
 
 
-def training_loop(
-        ddpm, loader, n_epochs, optim, device, display=False, store_path="ddpm_model.pt"
-):
-    mse = nn.MSELoss()
-    best_loss = float("inf")
-    n_steps = ddpm.n_steps
-
-    for epoch in tqdm(range(n_epochs), desc=f"Training progress", colour="#00ff00"):
-        epoch_loss = 0.0
-        for step, batch in enumerate(
-                tqdm(
-                    loader,
-                    leave=False,
-                    desc=f"Epoch {epoch + 1}/{n_epochs}",
-                    colour="#005500",
-                )
-        ):
-            # Loading data
-            x0 = batch[0].to(device)
-            n = len(x0)
-
-            # Picking some noise for each of the images in the batch, a timestep and the respective alpha_bars
-            eta = torch.randn_like(x0).to(device)
-            t = torch.randint(0, n_steps, (n,)).to(device)
-
-            # Computing the noisy image based on x0 and the time-step (forward process)
-            noisy_imgs = ddpm(x0, t, eta)
-
-            # Getting model estimation of noise based on the images and the time-step
-            eta_theta = ddpm.backward(noisy_imgs, t.reshape(n, -1))
-
-            # Optimizing the MSE between the noise plugged and the predicted noise
-            loss = mse(eta_theta, eta)
-            optim.zero_grad()
+def train_model(model, data_loader, epochs, optimizer, device):
+    """Training loop for the DDPM model."""
+    model.to(device)
+    criterion = nn.MSELoss()
+    for epoch in range(epochs):
+        model.train()
+        total_loss = 0.0
+        for images, _ in tqdm(data_loader):
+            images = images.to(device)
+            optimizer.zero_grad()
+            noisy_images, noise = model(images)
+            loss = criterion(noisy_images, noise)
             loss.backward()
-            optim.step()
-
-            epoch_loss += loss.item() * len(x0) / len(loader.dataset)
-
-        # Display images generated at this epoch
-        if display:
-            show_images(
-                generate_new_images(ddpm, device=device),
-                f"Images generated at epoch {epoch + 1}",
-            )
-
-        log_string = f"Loss at epoch {epoch + 1}: {epoch_loss:.3f}"
-
-        # Storing the model
-        if best_loss > epoch_loss:
-            best_loss = epoch_loss
-            torch.save(ddpm.state_dict(), store_path)
-            log_string += " --> Best model ever (stored)"
-
-        print(log_string)
+            optimizer.step()
+            total_loss += loss.item()
+        print(f"Epoch {epoch + 1}/{epochs}, Loss: {total_loss / len(data_loader)}")
 
 
 def main():
-    # Program arguments
     parser = ArgumentParser()
-    parser.add_argument(
-        "--no_train", action="store_true", help="Whether to train a new model or not"
-    )
-    parser.add_argument(
-        "--fashion",
-        action="store_true",
-        help="Uses MNIST if true, Fashion MNIST otherwise",
-    )
-    parser.add_argument("--bs", type=int, default=8, help="Batch size")
-    parser.add_argument("--epochs", type=int, default=120, help="Number of epochs")
-    parser.add_argument("--lr", type=float, default=0.001, help="Learning rate")
+    parser.add_argument("--epochs", type=int, default=10, help="Number of training epochs")
+    args = parser.parse_args()
 
-    args = vars(parser.parse_args())
-    print(args)
+    # Data loading
+    transform = transforms.Compose([Resize((28, 28)), ToTensor()])
+    dataset = datasets.MNIST(root="data", train=True, download=True, transform=transform)
+    data_loader = DataLoader(dataset, batch_size=32, shuffle=True)
 
-    # Model store path
-    store_path = "med_new_train_120.pt"
-
-    # Loading the data (converting each image into a tensor and normalizing between [-1, 1])
-    transform = Compose([Grayscale(num_output_channels=1),
-                         transforms.Resize((512, 512)),
-                         ToTensor(), Lambda(lambda x: (x - 0.5) * 2),
-                         ])
-    data_root = "/u/hvg7cb/UVA/datasets"
-    image_path = data_root + "/imageadd3/train/"  # data set path
-
-    train_dataset = datasets.ImageFolder(root=image_path + "light",
-                                         transform=transform)
-    loader = DataLoader(train_dataset, batch_size=args["bs"], shuffle=True, num_workers=0)
-
-    # Getting device
-    device = torch.device("cuda:2" if torch.cuda.is_available() else "cpu")
-    print(
-        f"Using device: {device}\t"
-        + (f"{torch.cuda.get_device_name(0)}" if torch.cuda.is_available() else "CPU")
-    )
-
-    # Defining model
-    n_steps, min_beta, max_beta = 1000, 10 ** -4, 0.02  # Originally used by the authors
-    ddpm = MyDDPM(
-        MyUNet(n_steps),
-        n_steps=n_steps,
-        min_beta=min_beta,
-        max_beta=max_beta,
-        device=device,
-    )
-
-    # Optionally, load a pre-trained model that will be further trained
-    # ddpm.load_state_dict(torch.load(store_path, map_location=device))
-
-    # Optionally, show a batch of regular images
-    # show_first_batch(loader)
-
-    # Optionally, show the diffusion (forward) process
-    # show_forward(ddpm, loader, device)
-
-    # Optionally, show the denoising (backward) process
-    # generated = generate_new_images(ddpm, gif_name="before_training.gif")
-    # show_images(generated, "Images generated before training")
+    # Model and optimizer
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = DDPM(UNet(), device=device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 
     # Training
-    if not args["no_train"]:
-        n_epochs, lr = args["epochs"], args["lr"]
-        training_loop(
-            ddpm,
-            loader,
-            n_epochs,
-            optim=Adam(ddpm.parameters(), lr),
-            device=device,
-            store_path=store_path,
-        )
+    train_model(model, data_loader, args.epochs, optimizer, device)
 
-    # Loading the trained model
-    best_model = MyDDPM(MyUNet(), n_steps=n_steps, device=device)
-    best_model.load_state_dict(torch.load(store_path, map_location=device))
-    best_model.eval()
-    print("Model loaded: Generating new med images")
-
-    # Showing generated images
-    generated = generate_new_images(
-        best_model,
-        n_samples=16,
-        device=device,
-        gif_name="med.gif"
-    )
-    show_images(generated, "Final result")
-    save_individual_images(generated, "Final result")
-
-if __name__ == "__main__":
-    main()
+    # Save
