@@ -4,7 +4,6 @@ import torch.nn.functional as F
 
 
 def sinusoidal_embedding(n, d):
-    # Alternate implementation of positional embedding
     position = torch.arange(0, n, dtype=torch.float).unsqueeze(1)
     div_term = torch.exp(torch.arange(0, d, 2).float() * (-math.log(10000.0) / d))
     embedding = torch.zeros(n, d)

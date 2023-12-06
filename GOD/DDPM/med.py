@@ -19,7 +19,7 @@ np.random.seed(SEED)
 torch.manual_seed(SEED)
 
 # Constants
-STORE_PATH = "ddpm_model.pt"
+STORE_PATH = "med_model.pt"
 
 
 def display_images(images, title="", save_dir="output"):
@@ -46,7 +46,6 @@ def display_images(images, title="", save_dir="output"):
 
 
 def process_and_save_images(images, title="", folder="saved_images"):
-    """Save individual images to a folder."""
     if not os.path.exists(folder):
         os.makedirs(folder)
 
@@ -58,14 +57,12 @@ def process_and_save_images(images, title="", folder="saved_images"):
 
 
 def visualize_batch(data_loader):
-    """Visualize the first batch from the loader."""
     for imgs, _ in data_loader:
         display_images(imgs, title="Sample Batch")
         break
 
 
 def simulate_ddpm_process(ddpm_model, data_loader, device):
-    """Simulate and display the DDPM process."""
     for imgs, _ in data_loader:
         display_images(imgs, "Original Images")
         for percent in [0.25, 0.5, 0.75, 1.0]:
@@ -75,7 +72,6 @@ def simulate_ddpm_process(ddpm_model, data_loader, device):
 
 
 def generate_samples(ddpm_model, n_samples=16, device='cpu'):
-    """Generate new samples using the DDPM model."""
     ddpm_model.to(device)
     x = torch.randn(n_samples, 1, 28, 28, device=device)
     for t in range(ddpm_model.n_steps - 1, -1, -1):
@@ -86,7 +82,6 @@ def generate_samples(ddpm_model, n_samples=16, device='cpu'):
 
 
 def train_model(model, data_loader, epochs, optimizer, device):
-    """Training loop for the DDPM model."""
     model.to(device)
     criterion = nn.MSELoss()
     for epoch in range(epochs):

@@ -2,10 +2,10 @@ import torch.nn as nn
 import torch
 
 
-class BasicBlock(nn.Module):  # 对应18层和34层所对应的残差结构（既要有实线残差结构功能，也要有虚线残差结构功能）
-    expansion = 1  # 残差结构主分支上的三个卷积层是否相同，相同为1，第三层是一二层四倍则为4
+class BasicBlock(nn.Module):  
+    expansion = 1 
 
-    def __init__(self, in_channel, out_channel, stride=1, downsample=None):  # downsample代表虚线残差结构选项
+    def __init__(self, in_channel, out_channel, stride=1, downsample=None):
         super(BasicBlock, self).__init__()
         self.conv1 = nn.Conv2d(in_channels=in_channel, out_channels=out_channel,
                                kernel_size=3, stride=stride, padding=1, bias=False)
@@ -19,7 +19,7 @@ class BasicBlock(nn.Module):  # 对应18层和34层所对应的残差结构（�
     def forward(self, x):
         identity = x
         if self.downsample is not None:
-            identity = self.downsample(x)  # 得到捷径分支的输出
+            identity = self.downsample(x) 
 
         out = self.conv1(x)
         out = self.bn1(out)
@@ -31,12 +31,11 @@ class BasicBlock(nn.Module):  # 对应18层和34层所对应的残差结构（�
         out += identity
         out = self.relu(out)
 
-        return out  # 得到残差结构的最终输出
+        return out 
 
 
-class Bottleneck(nn.Module):  # 对应50层、101层和152层所对应的残差结构
-    expansion = 4  # 第三层卷积核个数是第一层和第二层的四倍
-
+class Bottleneck(nn.Module): 
+    expansion = 4
     def __init__(self, in_channel, out_channel, stride=1, downsample=None):
         super(Bottleneck, self).__init__()
         self.conv1 = nn.Conv2d(in_channels=in_channel, out_channels=out_channel,
@@ -73,12 +72,11 @@ class Bottleneck(nn.Module):  # 对应50层、101层和152层所对应的残差�
         return out
 
 
-class ResNet(nn.Module):  # 定义整个网络的框架部分
-    # blocks_num是残差结构的数目，是一个列表参数，block对应哪个残差模块
+class ResNet(nn.Module): 
     def __init__(self, block, blocks_num, num_classes=1000, include_top=True):
         super(ResNet, self).__init__()
         self.include_top = include_top
-        self.in_channel = 64  # 通过第一个池化层后所得到的特征矩阵的深度
+        self.in_channel = 64 
         self.conv1 = nn.Conv2d(3, self.in_channel, kernel_size=7, stride=2,
                                padding=3, bias=False)
         self.bn1 = nn.BatchNorm2d(self.in_channel)
@@ -89,15 +87,15 @@ class ResNet(nn.Module):  # 定义整个网络的框架部分
         self.layer3 = self._make_layer(block, 256, blocks_num[2], stride=2)
         self.layer4 = self._make_layer(block, 512, blocks_num[3], stride=2)
         #if self.include_top:
-        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))  # output size = (1, 1)
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1)) 
         self.fc = nn.Linear(512 * block.expansion, num_classes)
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
 
-    def _make_layer(self, block, channel, block_num, stride=1):  # channel：残差结构中，第一个卷积层所使用的卷积核的个数
+    def _make_layer(self, block, channel, block_num, stride=1): 
         downsample = None
-        if stride != 1 or self.in_channel != channel * block.expansion:  # 18层和34层会直接跳过这个if语句
+        if stride != 1 or self.in_channel != channel * block.expansion:
             downsample = nn.Sequential(
                 nn.Conv2d(self.in_channel, channel * block.expansion, kernel_size=1, stride=stride, bias=False),
                 nn.BatchNorm2d(channel * block.expansion))
@@ -121,7 +119,7 @@ class ResNet(nn.Module):  # 定义整个网络的框架部分
         x = self.layer3(x)
         x = self.layer4(x)
         #print ('input feature:',x.shape)
-        if self.include_top:  # 默认是true
+        if self.include_top:  
             out = self.avgpool(x)
             out = torch.flatten(out, 1)
             out = self.fc(out)
@@ -137,21 +135,7 @@ class ResNet(nn.Module):  # 定义整个网络的框架部分
             return out, x
 
 
-def resnet18(num_classes=3, include_top=True):
-    return ResNet(BasicBlock, [2, 2, 2, 2], num_classes=num_classes, include_top=include_top)
-
 
 def rresnet18(num_classes=1000, include_top=True):
     return ResNet(BasicBlock, [2, 2, 2, 2], num_classes=num_classes, include_top=include_top)
 
-
-def resnet34(num_classes=1000, include_top=True):
-    return ResNet(BasicBlock, [3, 4, 6, 3], num_classes=num_classes, include_top=include_top)
-
-
-def resnet50(num_classes=1000, include_top=True):
-    return ResNet(Bottleneck, [3, 4, 6, 3], num_classes=num_classes, include_top=include_top)
-
-
-def resnet101(num_classes=1000, include_top=True):
-    return ResNet(Bottleneck, [3, 4, 23, 3], num_classes=num_classes, include_top=include_top)
